@@ -14,22 +14,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Loader2, AlertCircle, CheckCircle, RefreshCw, HelpCircle, Eye, EyeOff } from "lucide-react"
-import { getOrganization, getAzureSettings, saveAzureSettings } from "@/lib/client-storage"
-import { syncAzureADUsers } from "@/lib/azure-ad"
+import { Loader2, AlertCircle, CheckCircle, HelpCircle, Eye, EyeOff, Copy, AlertTriangle } from "lucide-react"
 
 export default function AzureSettingsPage({ params }: { params: { id: string } }) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
+  const [isTesting, setIsTesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [syncSuccess, setSyncSuccess] = useState<string | null>(null)
-  const [organizationName, setOrganizationName] = useState("Your Organization")
-  const [debugMode, setDebugMode] = useState(false)
-  const [debugLog, setDebugLog] = useState<string[]>([])
+  const [organizationName, setOrganizationName] = useState("Organization")
   const [showClientSecret, setShowClientSecret] = useState(false)
+  const [testResult, setTestResult] = useState<any>(null)
   const [settings, setSettings] = useState<AzureSettings>({
     id: `azure-${params.id}`,
     organization_id: params.id,
@@ -41,49 +37,36 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
     updated_at: new Date().toISOString(),
   })
 
-  // Helper function to add debug logs
-  const addDebugLog = (message: string) => {
-    if (debugMode) {
-      setDebugLog((prev) => [...prev, `${new Date().toISOString()}: ${message}`])
-      console.log(message)
-    }
-  }
-
   useEffect(() => {
     fetchSettings()
   }, [])
 
-  const fetchSettings = () => {
+  const fetchSettings = async () => {
     setIsLoading(true)
     setError(null)
 
     try {
-      addDebugLog(`Fetching settings for organization ${params.id}`)
+      // Fetch organization details
+      const orgResponse = await fetch(`/api/organizations/${params.id}`)
+      if (orgResponse.ok) {
+        const orgData = await orgResponse.json()
+        setOrganizationName(orgData.organization?.name || "Organization")
+      }
 
-      // Get organization from localStorage
-      const org = getOrganization(params.id)
-
-      if (org) {
-        addDebugLog(`Found organization: ${org.name}`)
-        setOrganizationName(org.name || "Your Organization")
-
-        // Get Azure settings
-        const azureSettings = getAzureSettings(params.id)
-
-        if (azureSettings) {
-          addDebugLog(`Found Azure settings for organization`)
-          setSettings(azureSettings)
-        } else {
-          addDebugLog(`No Azure settings found, using defaults`)
+      // Fetch Azure settings
+      const response = await fetch(`/api/organizations/${params.id}/azure-settings`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.settings) {
+          setSettings(data.settings)
         }
-      } else {
-        addDebugLog(`Organization not found in localStorage`)
-        setError("Organization not found")
+      } else if (response.status !== 404) {
+        const errorData = await response.json()
+        setError(errorData.error || "Failed to load Azure settings")
       }
     } catch (error) {
       console.error("Error fetching settings:", error)
-      addDebugLog(`Error fetching settings: ${error instanceof Error ? error.message : String(error)}`)
-      setError(`Failed to load settings: ${error instanceof Error ? error.message : String(error)}`)
+      setError("Failed to load Azure settings")
     } finally {
       setIsLoading(false)
     }
@@ -116,11 +99,8 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
     setIsSaving(true)
     setError(null)
     setSuccess(null)
-    setDebugLog([])
 
     try {
-      addDebugLog(`Saving Azure settings for organization ${params.id}`)
-
       // Validate required fields if connection is enabled
       if (settings.is_connected) {
         if (!settings.tenant_id || !settings.client_id || !settings.client_secret) {
@@ -128,80 +108,68 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
         }
       }
 
-      addDebugLog(`Settings validated, proceeding with save`)
+      const response = await fetch(`/api/organizations/${params.id}/azure-settings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(settings),
+      })
 
-      // Update settings with current timestamp
-      const updatedSettings = {
-        ...settings,
-        updated_at: new Date().toISOString(),
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to save settings")
       }
 
-      // Save Azure settings
-      saveAzureSettings(updatedSettings)
-
-      addDebugLog(`Azure settings saved successfully`)
+      const data = await response.json()
+      setSettings(data.settings)
       setSuccess("Azure settings saved successfully")
-
-      // Update local state
-      setSettings(updatedSettings)
     } catch (err) {
       console.error("Save error:", err)
-      addDebugLog(`Save error: ${err instanceof Error ? err.message : String(err)}`)
-      setError(`Failed to save settings: ${err instanceof Error ? err.message : String(err)}`)
+      setError(err instanceof Error ? err.message : "Failed to save settings")
     } finally {
       setIsSaving(false)
     }
   }
 
-  const handleSync = async () => {
-    setIsSyncing(true)
-    setSyncSuccess(null)
+  const testConnection = async () => {
+    setIsTesting(true)
+    setTestResult(null)
     setError(null)
-    setDebugLog([])
 
     try {
-      addDebugLog(`Starting sync for organization ${params.id}`)
-
-      // Validate Azure settings
       if (!settings.tenant_id || !settings.client_id || !settings.client_secret) {
-        throw new Error("Missing required Azure settings (tenant ID, client ID, or client secret)")
+        throw new Error("Please fill in all Azure AD credentials before testing")
       }
 
-      if (!settings.is_connected) {
-        throw new Error("Azure AD is not connected. Please enable the connection first.")
+      const response = await fetch(`/api/organizations/${params.id}/azure-settings/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tenant_id: settings.tenant_id,
+          client_id: settings.client_id,
+          client_secret: settings.client_secret,
+        }),
+      })
+
+      const result = await response.json()
+      setTestResult(result)
+
+      if (!result.success) {
+        setError(result.message || "Connection test failed")
       }
-
-      addDebugLog(`Azure settings validated, proceeding with sync`)
-
-      // Sync users from Azure AD
-      const syncResult = await syncAzureADUsers(params.id, settings)
-
-      addDebugLog(`Sync completed, got ${syncResult.count} users`)
-      setSyncSuccess(`Successfully synced ${syncResult.count} users from Azure AD`)
-
-      // Update settings with last sync time
-      const updatedSettings = {
-        ...settings,
-        last_sync: syncResult.last_sync,
-      }
-
-      // Save updated settings
-      saveAzureSettings(updatedSettings)
-
-      // Update local state
-      setSettings(updatedSettings)
-
-      // Refresh the page to show updated user count
-      setTimeout(() => {
-        router.refresh()
-      }, 1000)
     } catch (err) {
-      console.error("Sync error:", err)
-      addDebugLog(`Sync error: ${err instanceof Error ? err.message : String(err)}`)
-      setError(`Failed to sync users: ${err instanceof Error ? err.message : String(err)}`)
+      console.error("Test error:", err)
+      setError(err instanceof Error ? err.message : "Failed to test connection")
     } finally {
-      setIsSyncing(false)
+      setIsTesting(false)
     }
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
   }
 
   if (isLoading) {
@@ -220,20 +188,7 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Azure AD Integration</h1>
-          <p className="text-muted-foreground">Configure Azure Active Directory integration for user management</p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {debugMode && (
-            <Button variant="outline" size="sm" onClick={() => setDebugMode(false)}>
-              Debug: ON
-            </Button>
-          )}
-          {!debugMode && (
-            <Button variant="ghost" size="sm" onClick={() => setDebugMode(true)}>
-              Debug
-            </Button>
-          )}
+          <p className="text-muted-foreground">Configure Azure Active Directory integration for {organizationName}</p>
         </div>
 
         {error && (
@@ -250,84 +205,150 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
           </Alert>
         )}
 
-        {syncSuccess && (
-          <Alert className="bg-green-50 border-green-200">
-            <CheckCircle className="h-4 w-4 text-green-600" />
-            <AlertDescription className="text-green-700">{syncSuccess}</AlertDescription>
+        {testResult && (
+          <Alert variant={testResult.success ? "default" : "destructive"}>
+            {testResult.success ? (
+              <CheckCircle className="h-4 w-4 text-green-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4" />
+            )}
+            <AlertTitle>Connection Test Result</AlertTitle>
+            <AlertDescription>
+              <p>{testResult.message}</p>
+              {testResult.details && (
+                <div className="mt-2 text-sm">
+                  <p>
+                    <strong>Organization:</strong> {testResult.details.organizationName}
+                  </p>
+                  <p>
+                    <strong>Domains:</strong> {testResult.details.domains?.join(", ")}
+                  </p>
+                </div>
+              )}
+            </AlertDescription>
           </Alert>
         )}
 
-        {debugMode && debugLog.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Debug Log</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="bg-slate-100 p-4 rounded-md text-xs overflow-auto max-h-60">
-                <ul className="space-y-1">
-                  {debugLog.map((log, index) => (
-                    <li key={index}>{log}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="mt-4 flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const org = getOrganization(params.id)
-                    setDebugLog([...debugLog, `Current organization: ${JSON.stringify(org, null, 2)}`])
-                  }}
-                >
-                  Inspect Organization
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setDebugLog([])}>
-                  Clear Log
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        <Tabs defaultValue="settings">
+        <Tabs defaultValue="setup">
           <TabsList>
+            <TabsTrigger value="setup">Setup Guide</TabsTrigger>
             <TabsTrigger value="settings">Azure Settings</TabsTrigger>
-            <TabsTrigger value="sync">User Sync</TabsTrigger>
-            <TabsTrigger value="deployment">Deployment</TabsTrigger>
+            <TabsTrigger value="permissions">Permissions</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="setup">
+            <Card>
+              <CardHeader>
+                <CardTitle>Azure AD App Registration Setup</CardTitle>
+                <CardDescription>
+                  Follow these steps to create an Azure AD app registration for {organizationName}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <Alert>
+                  <HelpCircle className="h-4 w-4" />
+                  <AlertTitle>Multi-Tenant Setup</AlertTitle>
+                  <AlertDescription>
+                    Each organization needs its own Azure AD app registration in their own tenant. This ensures proper
+                    security isolation between organizations.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-4">
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Step 1: Create App Registration</h3>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm">
+                      <li>Go to the Azure Portal (portal.azure.com)</li>
+                      <li>Navigate to Azure Active Directory → App registrations</li>
+                      <li>Click "New registration"</li>
+                      <li>
+                        Enter name:{" "}
+                        <code className="bg-gray-100 px-1 rounded">Email Signature Platform - {organizationName}</code>
+                      </li>
+                      <li>Select "Accounts in this organizational directory only"</li>
+                      <li>
+                        Add redirect URI:{" "}
+                        <code className="bg-gray-100 px-1 rounded">https://your-domain.com/auth/callback</code>
+                      </li>
+                      <li>Click "Register"</li>
+                    </ol>
+                  </div>
+
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Step 2: Configure API Permissions</h3>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm">
+                      <li>Go to "API permissions" in your app registration</li>
+                      <li>Click "Add a permission" → "Microsoft Graph" → "Application permissions"</li>
+                      <li>
+                        Add these permissions:
+                        <ul className="list-disc pl-5 mt-1 space-y-1">
+                          <li>
+                            <code>User.Read.All</code> - Read all users
+                          </li>
+                          <li>
+                            <code>Group.Read.All</code> - Read all groups
+                          </li>
+                          <li>
+                            <code>Directory.Read.All</code> - Read directory data
+                          </li>
+                          <li>
+                            <code>Mail.ReadWrite</code> - Read and write mail
+                          </li>
+                          <li>
+                            <code>Exchange.ManageAsApp</code> - Manage Exchange Online
+                          </li>
+                        </ul>
+                      </li>
+                      <li>Click "Grant admin consent" (requires admin privileges)</li>
+                    </ol>
+                  </div>
+
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Step 3: Create Client Secret</h3>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm">
+                      <li>Go to "Certificates & secrets"</li>
+                      <li>Click "New client secret"</li>
+                      <li>
+                        Add description:{" "}
+                        <code className="bg-gray-100 px-1 rounded">Email Signature Platform Secret</code>
+                      </li>
+                      <li>Set expiration: 24 months</li>
+                      <li>Click "Add" and copy the secret value immediately</li>
+                    </ol>
+                  </div>
+
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Step 4: Get Required Information</h3>
+                    <p className="text-sm mb-2">From your Azure AD app registration, collect:</p>
+                    <ul className="list-disc pl-5 space-y-1 text-sm">
+                      <li>
+                        <strong>Directory (tenant) ID</strong> - From the Overview page
+                      </li>
+                      <li>
+                        <strong>Application (client) ID</strong> - From the Overview page
+                      </li>
+                      <li>
+                        <strong>Client secret</strong> - From step 3 above
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="settings">
             <Card>
               <form onSubmit={handleSave}>
                 <CardHeader>
-                  <CardTitle>Azure AD Connection</CardTitle>
-                  <CardDescription>Configure your Azure AD connection settings</CardDescription>
+                  <CardTitle>Azure AD Connection Settings</CardTitle>
+                  <CardDescription>Configure the Azure AD connection for {organizationName}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <Alert>
-                    <HelpCircle className="h-4 w-4" />
-                    <AlertTitle>Azure AD Configuration</AlertTitle>
-                    <AlertDescription>
-                      <p className="mt-2">
-                        To connect to Azure AD, you need to register an application in the Azure portal and grant it the
-                        necessary permissions to read user data.
-                      </p>
-                      <ol className="list-decimal pl-5 space-y-1 mt-2">
-                        <li>Go to the Azure Portal and navigate to Azure Active Directory</li>
-                        <li>Go to App registrations and create a new registration</li>
-                        <li>
-                          Grant the application the following API permissions: User.Read.All (Application permission)
-                        </li>
-                        <li>Create a client secret and copy the value</li>
-                        <li>Enter the Tenant ID, Client ID, and Client Secret below</li>
-                      </ol>
-                    </AlertDescription>
-                  </Alert>
-
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="is_connected" className="flex items-center gap-2">
-                        Connection enabled
+                        Enable Azure AD Integration
                       </Label>
                       <Switch
                         id="is_connected"
@@ -338,50 +359,74 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="tenant_id">Tenant ID (Directory ID)</Label>
-                      <Input
-                        id="tenant_id"
-                        name="tenant_id"
-                        placeholder="00000000-0000-0000-0000-000000000000"
-                        value={settings.tenant_id}
-                        onChange={handleChange}
-                        required={settings.is_connected}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="client_id">Client ID (Application ID)</Label>
-                      <Input
-                        id="client_id"
-                        name="client_id"
-                        placeholder="00000000-0000-0000-0000-000000000000"
-                        value={settings.client_id}
-                        onChange={handleChange}
-                        required={settings.is_connected}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="client_secret">Client Secret</Label>
-                      <div className="relative">
+                      <Label htmlFor="tenant_id">Directory (Tenant) ID</Label>
+                      <div className="flex gap-2">
                         <Input
-                          id="client_secret"
-                          name="client_secret"
-                          type={showClientSecret ? "text" : "password"}
-                          placeholder="Enter client secret"
-                          value={settings.client_secret}
+                          id="tenant_id"
+                          name="tenant_id"
+                          placeholder="00000000-0000-0000-0000-000000000000"
+                          value={settings.tenant_id}
                           onChange={handleChange}
                           required={settings.is_connected}
                         />
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           size="icon"
-                          className="absolute right-0 top-0 h-full px-3"
-                          onClick={() => setShowClientSecret(!showClientSecret)}
+                          onClick={() => copyToClipboard(settings.tenant_id)}
+                          disabled={!settings.tenant_id}
                         >
-                          {showClientSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          <Copy className="h-4 w-4" />
                         </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="client_id">Application (Client) ID</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="client_id"
+                          name="client_id"
+                          placeholder="00000000-0000-0000-0000-000000000000"
+                          value={settings.client_id}
+                          onChange={handleChange}
+                          required={settings.is_connected}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => copyToClipboard(settings.client_id)}
+                          disabled={!settings.client_id}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="client_secret">Client Secret</Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="client_secret"
+                            name="client_secret"
+                            type={showClientSecret ? "text" : "password"}
+                            placeholder="Enter client secret"
+                            value={settings.client_secret}
+                            onChange={handleChange}
+                            required={settings.is_connected}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-0 top-0 h-full px-3"
+                            onClick={() => setShowClientSecret(!showClientSecret)}
+                          >
+                            {showClientSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
@@ -402,197 +447,89 @@ export default function AzureSettingsPage({ params }: { params: { id: string } }
                       </Select>
                     </div>
 
-                    <div className="space-y-4 pt-4">
-                      <h3 className="text-lg font-medium">Sync Options</h3>
+                    <div className="flex gap-2">
+                      <Button type="submit" disabled={isSaving}>
+                        {isSaving ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          "Save Settings"
+                        )}
+                      </Button>
 
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="sync_disabled_users" className="flex items-center gap-2">
-                          Sync disabled users
-                        </Label>
-                        <Switch
-                          id="sync_disabled_users"
-                          name="sync_disabled_users"
-                          checked={settings.sync_disabled_users}
-                          onCheckedChange={(checked) => handleToggleChange("sync_disabled_users", checked)}
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="auto_provision" className="flex items-center gap-2">
-                          Auto-provision new users
-                        </Label>
-                        <Switch
-                          id="auto_provision"
-                          name="auto_provision"
-                          checked={settings.auto_provision}
-                          onCheckedChange={(checked) => handleToggleChange("auto_provision", checked)}
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="sync_groups" className="flex items-center gap-2">
-                          Sync Azure AD groups
-                        </Label>
-                        <Switch
-                          id="sync_groups"
-                          name="sync_groups"
-                          checked={settings.sync_groups}
-                          onCheckedChange={(checked) => handleToggleChange("sync_groups", checked)}
-                        />
-                      </div>
+                      <Button type="button" variant="outline" onClick={testConnection} disabled={isTesting}>
+                        {isTesting ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Testing...
+                          </>
+                        ) : (
+                          "Test Connection"
+                        )}
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
-                <div className="flex justify-end p-6 pt-0">
-                  <Button type="submit" disabled={isSaving}>
-                    {isSaving ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      "Save Settings"
-                    )}
-                  </Button>
-                </div>
               </form>
             </Card>
           </TabsContent>
 
-          <TabsContent value="sync">
+          <TabsContent value="permissions">
             <Card>
               <CardHeader>
-                <CardTitle>User Synchronization</CardTitle>
-                <CardDescription>Sync users from Azure Active Directory</CardDescription>
+                <CardTitle>Required Permissions</CardTitle>
+                <CardDescription>Azure AD permissions needed for full functionality</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-medium">Last Sync</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {settings.last_sync
-                          ? new Date(settings.last_sync).toLocaleString()
-                          : "No sync has been performed yet"}
-                      </p>
-                    </div>
-                    <Button onClick={handleSync} disabled={isSyncing || !settings.is_connected}>
-                      {isSyncing ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Syncing...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          Sync Now
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {!settings.is_connected && (
-                    <Alert>
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Azure AD connection is not enabled. Please enable the connection in the Azure Settings tab.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  <div className="rounded-md border p-4">
-                    <h3 className="font-medium mb-2">Sync Status</h3>
+                  <div className="border rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Microsoft Graph Application Permissions</h3>
                     <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span>Connection Status:</span>
-                        <span
-                          className={
-                            settings.is_connected ? "text-green-600 font-medium" : "text-yellow-600 font-medium"
-                          }
-                        >
-                          {settings.is_connected ? "Connected" : "Not Connected"}
+                      <div className="flex justify-between items-center">
+                        <span>
+                          <code>User.Read.All</code>
                         </span>
+                        <span className="text-sm text-muted-foreground">Read all user profiles</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Sync Frequency:</span>
-                        <span className="font-medium">
-                          {settings.sync_frequency === "manual"
-                            ? "Manual"
-                            : settings.sync_frequency === "daily"
-                              ? "Daily"
-                              : "Weekly"}
+                      <div className="flex justify-between items-center">
+                        <span>
+                          <code>Group.Read.All</code>
                         </span>
+                        <span className="text-sm text-muted-foreground">Read all groups</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Last Sync:</span>
-                        <span className="font-medium">
-                          {settings.last_sync ? new Date(settings.last_sync).toLocaleString() : "Never"}
+                      <div className="flex justify-between items-center">
+                        <span>
+                          <code>Directory.Read.All</code>
                         </span>
+                        <span className="text-sm text-muted-foreground">Read directory data</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span>
+                          <code>Mail.ReadWrite</code>
+                        </span>
+                        <span className="text-sm text-muted-foreground">Read and write mail settings</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span>
+                          <code>Exchange.ManageAsApp</code>
+                        </span>
+                        <span className="text-sm text-muted-foreground">Manage Exchange Online</span>
                       </div>
                     </div>
                   </div>
+
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Admin Consent Required</AlertTitle>
+                    <AlertDescription>
+                      These permissions require admin consent from a Global Administrator in the organization's Azure AD
+                      tenant.
+                    </AlertDescription>
+                  </Alert>
                 </div>
               </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="deployment">
-            <Card>
-              <CardHeader>
-                <CardTitle>Signature Deployment</CardTitle>
-                <CardDescription>Configure how signatures are deployed to users</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="auto_assign_signatures" className="flex items-center gap-2">
-                      Auto-assign signatures to new users
-                    </Label>
-                    <Switch
-                      id="auto_assign_signatures"
-                      name="auto_assign_signatures"
-                      checked={settings.auto_assign_signatures}
-                      onCheckedChange={(checked) => handleToggleChange("auto_assign_signatures", checked)}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="server_side_deployment" className="flex items-center gap-2">
-                      Enable server-side deployment
-                    </Label>
-                    <Switch
-                      id="server_side_deployment"
-                      name="server_side_deployment"
-                      checked={settings.server_side_deployment}
-                      onCheckedChange={(checked) => handleToggleChange("server_side_deployment", checked)}
-                    />
-                  </div>
-                </div>
-
-                <Alert>
-                  <HelpCircle className="h-4 w-4" />
-                  <AlertTitle>Server-Side Deployment</AlertTitle>
-                  <AlertDescription>
-                    <p className="mt-2">
-                      Server-side deployment allows signatures to be automatically applied to all outgoing emails
-                      without requiring user installation. This requires additional configuration in your Exchange
-                      Online environment.
-                    </p>
-                  </AlertDescription>
-                </Alert>
-              </CardContent>
-              <div className="flex justify-end p-6 pt-0">
-                <Button type="button" onClick={handleSave} disabled={isSaving}>
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    "Save Settings"
-                  )}
-                </Button>
-              </div>
             </Card>
           </TabsContent>
         </Tabs>
