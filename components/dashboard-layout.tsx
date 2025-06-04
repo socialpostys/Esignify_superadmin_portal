@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -14,6 +13,7 @@ import {
   LayoutDashboard,
   PlusCircle,
   CloudIcon as Azure,
+  Globe,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -67,6 +67,16 @@ export function DashboardLayout({ children, userRole, orgName }: DashboardLayout
       title: "Dashboard",
       href: "/org-admin/dashboard",
       icon: LayoutDashboard,
+    },
+    {
+      title: "Domain",
+      href: "/org-admin/domain",
+      icon: Globe,
+    },
+    {
+      title: "DNS",
+      href: "/org-admin/dns",
+      icon: Globe,
     },
     {
       title: "Users",

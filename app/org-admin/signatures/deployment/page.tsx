@@ -11,13 +11,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ArrowLeft,
-  Play,
-  Trash2,
   RefreshCw,
   CheckCircle,
   XCircle,
@@ -25,6 +22,8 @@ import {
   Settings,
   Monitor,
   Download,
+  FileText,
+  ExternalLink,
 } from "lucide-react"
 import { getSupabaseClient } from "@/lib/supabase-client"
 
@@ -38,9 +37,9 @@ export default function DeploymentPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [deploymentLogs, setDeploymentLogs] = useState<any[]>([])
   const [transportRules, setTransportRules] = useState<any[]>([])
+  const [powershellScripts, setPowershellScripts] = useState<any[]>([])
   const [connectionStatus, setConnectionStatus] = useState<"unknown" | "connected" | "disconnected">("unknown")
   const [templates, setTemplates] = useState<any[]>([])
-  const [users, setUsers] = useState<any[]>([])
 
   // Form state
   const [ruleConfig, setRuleConfig] = useState({
@@ -57,116 +56,100 @@ export default function DeploymentPage() {
   })
 
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true)
-      try {
-        const supabase = getSupabaseClient()
-        if (!supabase) {
-          throw new Error("Supabase client not available")
-        }
-
-        // Get current organization ID from cookie
-        const cookies = document.cookie.split(";").reduce(
-          (acc, cookie) => {
-            const [key, value] = cookie.trim().split("=")
-            acc[key] = value
-            return acc
-          },
-          {} as Record<string, string>,
-        )
-
-        const organizationId = cookies.organization_id
-
-        if (!organizationId) {
-          throw new Error("No organization selected")
-        }
-
-        // Get organization
-        const { data: orgData, error: orgError } = await supabase
-          .from("organizations")
-          .select("*")
-          .eq("id", organizationId)
-          .single()
-
-        if (orgError) {
-          throw new Error(`Failed to load organization: ${orgError.message}`)
-        }
-
-        setOrganization(orgData)
-
-        // Get signature templates
-        const { data: templateData, error: templateError } = await supabase
-          .from("signature_templates")
-          .select("*")
-          .eq("organization_id", organizationId)
-
-        if (templateError) {
-          console.error("Error loading templates:", templateError)
-        } else {
-          setTemplates(templateData || [])
-
-          // Set default template in form
-          if (templateData && templateData.length > 0) {
-            const defaultTemplate = templateData.find((t) => t.is_default) || templateData[0]
-            setRuleConfig((prev) => ({
-              ...prev,
-              name: `Signature - ${orgData.name}`,
-              description: `Email signature for ${orgData.name}`,
-              htmlContent: defaultTemplate.html_content,
-            }))
-          }
-        }
-
-        // Get users
-        const { data: userData, error: userError } = await supabase
-          .from("users")
-          .select("*")
-          .eq("organization_id", organizationId)
-
-        if (userError) {
-          console.error("Error loading users:", userError)
-        } else {
-          setUsers(userData || [])
-        }
-
-        // Get transport rules
-        const { data: ruleData, error: ruleError } = await supabase
-          .from("transport_rules")
-          .select("*")
-          .eq("organization_id", organizationId)
-
-        if (ruleError) {
-          console.error("Error loading transport rules:", ruleError)
-        } else {
-          setTransportRules(ruleData || [])
-        }
-
-        // Get deployment logs
-        const { data: logData, error: logError } = await supabase
-          .from("deployment_logs")
-          .select("*")
-          .eq("organization_id", organizationId)
-          .order("created_at", { ascending: false })
-          .limit(50)
-
-        if (logError) {
-          console.error("Error loading deployment logs:", logError)
-        } else {
-          setDeploymentLogs(logData || [])
-        }
-
-        // Test connection
-        await testConnection()
-      } catch (error) {
-        console.error("Error fetching data:", error)
-        setError(`Failed to load data: ${error instanceof Error ? error.message : String(error)}`)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
     fetchData()
   }, [])
+
+  const fetchData = async () => {
+    setIsLoading(true)
+    try {
+      const supabase = getSupabaseClient()
+      if (!supabase) {
+        throw new Error("Supabase client not available")
+      }
+
+      // Get current organization ID from cookie
+      const cookies = document.cookie.split(";").reduce(
+        (acc, cookie) => {
+          const [key, value] = cookie.trim().split("=")
+          acc[key] = value
+          return acc
+        },
+        {} as Record<string, string>,
+      )
+
+      const organizationId = cookies.organization_id
+
+      if (!organizationId) {
+        throw new Error("No organization selected")
+      }
+
+      // Get organization
+      const { data: orgData, error: orgError } = await supabase
+        .from("organizations")
+        .select("*")
+        .eq("id", organizationId)
+        .single()
+
+      if (orgError) {
+        throw new Error(`Failed to load organization: ${orgError.message}`)
+      }
+
+      setOrganization(orgData)
+
+      // Get signature templates
+      const { data: templateData } = await supabase
+        .from("signature_templates")
+        .select("*")
+        .eq("organization_id", organizationId)
+
+      setTemplates(templateData || [])
+
+      if (templateData && templateData.length > 0) {
+        const defaultTemplate = templateData.find((t) => t.is_default) || templateData[0]
+        setRuleConfig((prev) => ({
+          ...prev,
+          name: `Signature - ${orgData.name}`,
+          description: `Email signature for ${orgData.name}`,
+          htmlContent: defaultTemplate.html_content,
+        }))
+      }
+
+      // Get transport rules
+      const { data: ruleData } = await supabase
+        .from("transport_rules")
+        .select("*")
+        .eq("organization_id", organizationId)
+
+      setTransportRules(ruleData || [])
+
+      // Get PowerShell scripts
+      const { data: scriptData } = await supabase
+        .from("powershell_scripts")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .order("created_at", { ascending: false })
+
+      setPowershellScripts(scriptData || [])
+
+      // Get deployment logs
+      const { data: logData } = await supabase
+        .from("deployment_logs")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .order("created_at", { ascending: false })
+        .limit(50)
+
+      setDeploymentLogs(logData || [])
+
+      // Test connection
+      await testConnection()
+    } catch (error) {
+      console.error("Error fetching data:", error)
+      setError(`Failed to load data: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const testConnection = async () => {
     setIsTesting(true)
@@ -188,10 +171,10 @@ export default function DeploymentPage() {
 
       if (response.ok && result.success) {
         setConnectionStatus("connected")
-        setSuccess("Successfully connected to Exchange Online")
+        setSuccess("Successfully connected to Microsoft 365")
       } else {
         setConnectionStatus("disconnected")
-        setError(result.error || result.message || "Failed to connect to Exchange Online")
+        setError(result.error || result.message || "Failed to connect to Microsoft 365")
       }
     } catch (error) {
       setConnectionStatus("disconnected")
@@ -201,19 +184,14 @@ export default function DeploymentPage() {
     }
   }
 
-  const deployRule = async () => {
+  const generateScript = async () => {
     setIsDeploying(true)
     setError(null)
     setSuccess(null)
 
     try {
-      // Validate form
-      if (!ruleConfig.name) {
-        throw new Error("Rule name is required")
-      }
-
-      if (!ruleConfig.htmlContent) {
-        throw new Error("HTML content is required")
+      if (!ruleConfig.name || !ruleConfig.htmlContent) {
+        throw new Error("Rule name and HTML content are required")
       }
 
       const response = await fetch("/api/exchange", {
@@ -230,109 +208,42 @@ export default function DeploymentPage() {
       const result = await response.json()
 
       if (response.ok && result.success) {
-        setSuccess(`Transport rule "${ruleConfig.name}" deployed successfully`)
+        setSuccess(
+          `PowerShell script generated for "${ruleConfig.name}". Download and execute manually in Exchange Online PowerShell.`,
+        )
 
-        // Refresh transport rules
-        await loadTransportRules()
-
-        // Refresh deployment logs
-        await loadDeploymentLogs()
+        // Refresh data
+        await fetchData()
       } else {
-        setError(result.error || result.message || "Failed to deploy transport rule")
+        setError(result.error || result.message || "Failed to generate PowerShell script")
       }
     } catch (error) {
-      setError(`Deployment failed: ${error instanceof Error ? error.message : String(error)}`)
+      setError(`Script generation failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setIsDeploying(false)
     }
   }
 
-  const loadTransportRules = async () => {
+  const downloadScript = async (scriptId: string) => {
     try {
-      const response = await fetch("/api/exchange", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "getRules",
-        }),
-      })
+      const response = await fetch(`/api/powershell/download?id=${scriptId}`)
 
-      const result = await response.json()
-
-      if (response.ok && result.rules) {
-        setTransportRules(result.rules)
+      if (!response.ok) {
+        throw new Error("Failed to download script")
       }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `transport-rule-${Date.now()}.ps1`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
     } catch (error) {
-      console.error("Failed to load transport rules:", error)
+      setError(`Failed to download script: ${error instanceof Error ? error.message : String(error)}`)
     }
-  }
-
-  const loadDeploymentLogs = async () => {
-    try {
-      const supabase = getSupabaseClient()
-      if (!supabase) return
-
-      const { data, error } = await supabase
-        .from("deployment_logs")
-        .select("*")
-        .eq("organization_id", organization.id)
-        .order("created_at", { ascending: false })
-        .limit(50)
-
-      if (error) {
-        console.error("Error loading deployment logs:", error)
-      } else {
-        setDeploymentLogs(data || [])
-      }
-    } catch (error) {
-      console.error("Failed to load deployment logs:", error)
-    }
-  }
-
-  const deleteRule = async (ruleId: string) => {
-    try {
-      const response = await fetch("/api/exchange", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "deleteRule",
-          ruleId,
-        }),
-      })
-
-      const result = await response.json()
-
-      if (response.ok && result.success) {
-        setSuccess("Transport rule deleted successfully")
-
-        // Refresh transport rules
-        await loadTransportRules()
-
-        // Refresh deployment logs
-        await loadDeploymentLogs()
-      } else {
-        setError(result.error || result.message || "Failed to delete transport rule")
-      }
-    } catch (error) {
-      setError(`Failed to delete rule: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
-  const exportLogs = () => {
-    const logs = JSON.stringify(deploymentLogs, null, 2)
-    const blob = new Blob([logs], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `deployment-logs-${new Date().toISOString().split("T")[0]}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
   }
 
   if (isLoading) {
@@ -356,7 +267,7 @@ export default function DeploymentPage() {
           </Button>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Exchange Online Deployment</h1>
-            <p className="text-muted-foreground">Manage server-side signature deployment with Exchange Online</p>
+            <p className="text-muted-foreground">Generate PowerShell scripts for manual Exchange Online deployment</p>
           </div>
         </div>
 
@@ -368,18 +279,28 @@ export default function DeploymentPage() {
         )}
 
         {success && (
-          <Alert variant="success">
-            <CheckCircle className="h-4 w-4" />
-            <AlertDescription>{success}</AlertDescription>
+          <Alert className="border-green-200 bg-green-50">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <AlertDescription className="text-green-800">{success}</AlertDescription>
           </Alert>
         )}
+
+        {/* Important Notice */}
+        <Alert className="border-blue-200 bg-blue-50">
+          <AlertTriangle className="h-4 w-4 text-blue-600" />
+          <AlertDescription className="text-blue-800">
+            <strong>Manual Execution Required:</strong> This platform generates PowerShell scripts that must be manually
+            executed in Exchange Online PowerShell. Real-time deployment is not possible due to Microsoft security
+            restrictions.
+          </AlertDescription>
+        </Alert>
 
         {/* Connection Status */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Settings className="h-5 w-5" />
-              Connection Status
+              Microsoft 365 Connection
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -388,13 +309,13 @@ export default function DeploymentPage() {
                 {connectionStatus === "connected" && (
                   <>
                     <CheckCircle className="h-5 w-5 text-green-500" />
-                    <span className="text-green-700">Connected to Exchange Online</span>
+                    <span className="text-green-700">Connected to Microsoft 365</span>
                   </>
                 )}
                 {connectionStatus === "disconnected" && (
                   <>
                     <XCircle className="h-5 w-5 text-red-500" />
-                    <span className="text-red-700">Disconnected from Exchange Online</span>
+                    <span className="text-red-700">Disconnected from Microsoft 365</span>
                   </>
                 )}
                 {connectionStatus === "unknown" && (
@@ -416,18 +337,20 @@ export default function DeploymentPage() {
           </CardContent>
         </Card>
 
-        <Tabs defaultValue="deploy" className="space-y-4">
+        <Tabs defaultValue="generate" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="deploy">Deploy Rules</TabsTrigger>
-            <TabsTrigger value="manage">Manage Rules</TabsTrigger>
+            <TabsTrigger value="generate">Generate Script</TabsTrigger>
+            <TabsTrigger value="scripts">PowerShell Scripts</TabsTrigger>
             <TabsTrigger value="monitor">Monitor & Logs</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="deploy" className="space-y-4">
+          <TabsContent value="generate" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Deploy Transport Rule</CardTitle>
-                <CardDescription>Configure and deploy a new transport rule for email signatures</CardDescription>
+                <CardTitle>Generate Transport Rule Script</CardTitle>
+                <CardDescription>
+                  Configure and generate a PowerShell script for Exchange Online deployment
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -499,40 +422,6 @@ export default function DeploymentPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="location">Signature Location</Label>
-                    <Select
-                      value={ruleConfig.location}
-                      onValueChange={(value) => setRuleConfig((prev) => ({ ...prev, location: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Append">Append</SelectItem>
-                        <SelectItem value="Prepend">Prepend</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="fallbackAction">Fallback Action</Label>
-                    <Select
-                      value={ruleConfig.fallbackAction}
-                      onValueChange={(value) => setRuleConfig((prev) => ({ ...prev, fallbackAction: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Wrap">Wrap</SelectItem>
-                        <SelectItem value="Ignore">Ignore</SelectItem>
-                        <SelectItem value="Reject">Reject</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="htmlContent">HTML Content</Label>
                   <Textarea
@@ -544,29 +433,16 @@ export default function DeploymentPage() {
                   />
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="enabled"
-                    checked={ruleConfig.enabled}
-                    onCheckedChange={(checked) => setRuleConfig((prev) => ({ ...prev, enabled: !!checked }))}
-                  />
-                  <Label htmlFor="enabled">Enable rule immediately</Label>
-                </div>
-
-                <Button
-                  onClick={deployRule}
-                  disabled={isDeploying || connectionStatus !== "connected"}
-                  className="w-full"
-                >
+                <Button onClick={generateScript} disabled={isDeploying} className="w-full">
                   {isDeploying ? (
                     <>
                       <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                      Deploying...
+                      Generating Script...
                     </>
                   ) : (
                     <>
-                      <Play className="h-4 w-4 mr-2" />
-                      Deploy Transport Rule
+                      <FileText className="h-4 w-4 mr-2" />
+                      Generate PowerShell Script
                     </>
                   )}
                 </Button>
@@ -574,34 +450,33 @@ export default function DeploymentPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="manage" className="space-y-4">
+          <TabsContent value="scripts" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Active Transport Rules</CardTitle>
-                <CardDescription>Manage your deployed transport rules</CardDescription>
+                <CardTitle>Generated PowerShell Scripts</CardTitle>
+                <CardDescription>Download and execute these scripts in Exchange Online PowerShell</CardDescription>
               </CardHeader>
               <CardContent>
-                {transportRules.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">No transport rules deployed yet</div>
+                {powershellScripts.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">No PowerShell scripts generated yet</div>
                 ) : (
                   <div className="space-y-4">
-                    {transportRules.map((rule) => (
-                      <div key={rule.id} className="border rounded-lg p-4">
+                    {powershellScripts.map((script) => (
+                      <div key={script.id} className="border rounded-lg p-4">
                         <div className="flex items-center justify-between">
                           <div>
-                            <h3 className="font-semibold">{rule.name}</h3>
-                            <p className="text-sm text-muted-foreground">{rule.description}</p>
-                            <div className="flex items-center gap-2 mt-2">
-                              <Badge variant={rule.is_enabled ? "default" : "secondary"}>
-                                {rule.is_enabled ? "Enabled" : "Disabled"}
-                              </Badge>
-                              <Badge variant="outline">{rule.deployment_status}</Badge>
-                              <span className="text-xs text-muted-foreground">Priority: {rule.priority}</span>
-                            </div>
+                            <h3 className="font-semibold">{script.rule_name}</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Created: {new Date(script.created_at).toLocaleString()}
+                            </p>
+                            <Badge variant={script.status === "pending_execution" ? "secondary" : "default"}>
+                              {script.status.replace("_", " ")}
+                            </Badge>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button variant="outline" size="sm" onClick={() => deleteRule(rule.exchange_rule_id)}>
-                              <Trash2 className="h-4 w-4" />
+                            <Button variant="outline" size="sm" onClick={() => downloadScript(script.id)}>
+                              <Download className="h-4 w-4 mr-2" />
+                              Download
                             </Button>
                           </div>
                         </div>
@@ -611,26 +486,49 @@ export default function DeploymentPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Manual Setup Instructions */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ExternalLink className="h-5 w-5" />
+                  Manual Setup Instructions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <h4 className="font-semibold">Steps to execute PowerShell scripts:</h4>
+                  <ol className="list-decimal list-inside space-y-2 text-sm">
+                    <li>
+                      Install Exchange Online PowerShell module:{" "}
+                      <code className="bg-muted px-1 rounded">Install-Module -Name ExchangeOnlineManagement</code>
+                    </li>
+                    <li>
+                      Connect to Exchange Online: <code className="bg-muted px-1 rounded">Connect-ExchangeOnline</code>
+                    </li>
+                    <li>Download the PowerShell script from above</li>
+                    <li>Run the script in PowerShell</li>
+                    <li>
+                      Verify the transport rule was created:{" "}
+                      <code className="bg-muted px-1 rounded">Get-TransportRule</code>
+                    </li>
+                  </ol>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="monitor" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Monitor className="h-5 w-5" />
-                    Deployment Logs
-                  </div>
-                  <Button variant="outline" size="sm" onClick={exportLogs}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Export Logs
-                  </Button>
+                <CardTitle className="flex items-center gap-2">
+                  <Monitor className="h-5 w-5" />
+                  Activity Logs
                 </CardTitle>
-                <CardDescription>Monitor deployment activities and troubleshoot issues</CardDescription>
               </CardHeader>
               <CardContent>
                 {deploymentLogs.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">No deployment logs available</div>
+                  <div className="text-center py-8 text-muted-foreground">No activity logs available</div>
                 ) : (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
                     {deploymentLogs.map((log) => (
@@ -648,14 +546,6 @@ export default function DeploymentPage() {
                           </span>
                         </div>
                         <p className="text-sm text-muted-foreground mt-1">{log.message}</p>
-                        {log.details && (
-                          <details className="mt-2">
-                            <summary className="text-xs cursor-pointer">Details</summary>
-                            <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto">
-                              {JSON.stringify(log.details, null, 2)}
-                            </pre>
-                          </details>
-                        )}
                       </div>
                     ))}
                   </div>
